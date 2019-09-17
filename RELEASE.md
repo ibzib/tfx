@@ -1,6 +1,8 @@
 # Current version (not yet released; still in development)
 
 ## Major Features and Improvements
+*   Introduced `PipelineConfig` and `BaseComponentConfig` to control the
+    platform specific settings for pipelines and components.
 
 ## Bug fixes and other changes
 
