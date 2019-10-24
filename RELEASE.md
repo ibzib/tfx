@@ -18,6 +18,7 @@
 
 ## Major Features and Improvements
 
+*   Added documentation for Fairness Indicators.
 *   Offered unified CLI for tfx pipeline actions on various orchestrators
     including Apache Airflow, Apache Beam and Kubeflow.
 *   Polished experimental interactive notebook execution and visualizations
