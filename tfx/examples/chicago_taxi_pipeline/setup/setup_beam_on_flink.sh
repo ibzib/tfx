@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 set -u
+set -e
 
-source `dirname "$(readlink -f "$0")"`/setup_beam.sh
+source `dirname "$(realpath "$0")"`/setup_beam.sh
 
 if [ "${VIRTUAL_ENV:-unset}" == "unset" ]; then
   echo "Please run the setup script from a vritual environment and make sure environment variable\
@@ -30,6 +31,7 @@ FLINK_DOWNLOAD_URL="http://archive.apache.org/dist/flink/flink-$FLINK_VERSION/$F
 function setup_flink() {
   if [ ! -d $WORK_DIR/$FLINK_NAME ]; then
     echo "SETUP FLINK at $WORK_DIR/$FLINK_NAME"
+    mkdir -p $WORK_DIR
     cd $WORK_DIR && curl $FLINK_DOWNLOAD_URL -o $WORK_DIR/$FLINK_BINARY  && tar -xvf $FLINK_BINARY
     if [ $? != 0 ]; then
       echo "ERROR: Unable to download Flink from $FLINK_DOWNLOAD_URL." \
@@ -48,21 +50,14 @@ function start_flink() {
   echo "Starting flink at $WORK_DIR/$FLINK_NAME"
   local flink_conf=$WORK_DIR/$FLINK_NAME/conf/flink-conf.yaml
   local parallelism=$(get_parallelism)
-  sed -i "s/taskmanager.numberOfTaskSlots: [0-9]*/taskmanager.numberOfTaskSlots: $parallelism/g" $flink_conf
+  sed -i'.bak' -e "s/taskmanager.numberOfTaskSlots: [0-9]*/taskmanager.numberOfTaskSlots: $parallelism/g" $flink_conf
 
   # TODO(FLINK-10672) Remove workaround
   # Increase taskmanager heap size to reduce back pressure
-  sed -i "s/taskmanager.heap.size: [0-9]*m/taskmanager.heap.size: 2048m/g" $flink_conf
+  sed -i'.bak' -e "s/taskmanager.heap.size: [0-9]*m/taskmanager.heap.size: 2048m/g" $flink_conf
 
   cd $WORK_DIR/$FLINK_NAME && ./bin/stop-cluster.sh && ./bin/start-cluster.sh
   echo "Flink running from $WORK_DIR/$FLINK_NAME"
-}
-
-# TODO(b/139747527) Start the job server through the SDK automatically
-function start_job_server() {
-  echo "Starting Beam Flink jobserver"
-  cd $BEAM_DIR
-  ./gradlew :runners:flink:1.9:job-server:runShadow -PflinkMasterUrl=localhost:8081
 }
 
 # LINT.IfChange
@@ -79,18 +74,9 @@ print(parallelism)
 # LINT.ThenChange(../taxi_pipeline_portable_beam.py)
 
 function main(){
-  check_java
   # Check and create the relevant directory
-  if [ ! -d "$WORK_DIR" ]; then
-    install_beam
-  else
-    echo "Work directory $WORK_DIR already exists."
-    echo "Please delete $WORK_DIR in case of issue."
-    update_beam
-  fi
   setup_flink
   start_flink
-  start_job_server
 }
 
 main $@
