@@ -23,6 +23,7 @@ import os
 from typing import Text
 
 import absl
+import argparse
 
 from tfx.components import CsvExampleGen
 from tfx.components import Evaluator
@@ -68,7 +69,8 @@ _metadata_path = os.path.join(_tfx_root, 'metadata', _pipeline_name,
 def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
                      module_file: Text, serving_model_dir: Text,
                      metadata_path: Text,
-                     worker_parallelism: int) -> pipeline.Pipeline:
+                     worker_parallelism: int,
+                     runner: Text) -> pipeline.Pipeline:
   """Implements the chicago taxi pipeline with TFX."""
   examples = external_input(data_root)
 
@@ -125,6 +127,43 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
           filesystem=pusher_pb2.PushDestination.Filesystem(
               base_directory=serving_model_dir)))
 
+  beam_common_args = [
+      '--environment_type=LOOPBACK',
+      '--sdk_worker_parallelism=%d' % worker_parallelism,
+      '--experiments=use_loopback_process_worker=True',
+
+      # Setting environment_cache_millis to practically infinity enables
+      # continual reuse of Beam SDK workers, improving performance.
+      '--environment_cache_millis=1000000',
+
+      # Note; We use 100 worker threads to mitigate the issue with
+      # scheduling work between the Beam runner and SDK harness. Flink
+      # and Spark can process unlimited work items concurrently while
+      # SdkHarness can only process 1 work item per worker thread.
+      # Having 100 threads will let 100 tasks execute concurrently
+      # avoiding scheduling issue in most cases. In case the threads are
+      # exhausted, beam prints the relevant message in the log.
+      # TODO(BEAM-8151) Remove worker_threads=100 after we start using a  # pylint: disable=g-bad-todo
+      # virtually unlimited thread pool by default.
+      '--experiments=worker_threads=100',
+  ]
+  if runner == 'flink':
+    beam_pipeline_args = beam_common_args + [
+      '--runner=FlinkRunner',
+      '--flink_master=localhost:8081',
+      '--flink_submit_uber_jar',
+      # TODO(ibzib) move these to flink.conf
+      '--parallelism=%d' % worker_parallelism,
+
+      # TODO(FLINK-10672): Obviate setting BATCH_FORCED.  # pylint: disable=g-bad-todo
+      '--execution_mode_for_batch=BATCH_FORCED',
+
+    ]
+  elif runner == 'spark':
+    beam_pipeline_args = beam_common_args + [
+        # TODO(ibzib)
+    ]
+
   return pipeline.Pipeline(
       pipeline_name=pipeline_name,
       pipeline_root=pipeline_root,
@@ -136,43 +175,7 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       metadata_connection_config=metadata.sqlite_metadata_connection_config(
           metadata_path),
       # LINT.IfChange
-      beam_pipeline_args=[
-          # -------------------------- Beam Args --------------------------.
-          '--runner=PortableRunner',
-
-          # Points to the job server started in
-          # setup_beam_on_{flink, spark}.sh
-          '--job_endpoint=localhost:8099',
-          '--environment_type=LOOPBACK',
-          '--sdk_worker_parallelism=%d' % worker_parallelism,
-          '--experiments=use_loopback_process_worker=True',
-
-          # Setting environment_cache_millis to practically infinity enables
-          # continual reuse of Beam SDK workers, improving performance.
-          '--environment_cache_millis=1000000',
-
-          # TODO(BEAM-7199): Obviate the need for setting pre_optimize=all.  # pylint: disable=g-bad-todo
-          '--experiments=pre_optimize=all',
-
-          # Note; We use 100 worker threads to mitigate the issue with
-          # scheduling work between the Beam runner and SDK harness. Flink
-          # and Spark can process unlimited work items concurrently while
-          # SdkHarness can only process 1 work item per worker thread.
-          # Having 100 threads will let 100 tasks execute concurrently
-          # avoiding scheduling issue in most cases. In case the threads are
-          # exhausted, beam prints the relevant message in the log.
-          # TODO(BEAM-8151) Remove worker_threads=100 after we start using a  # pylint: disable=g-bad-todo
-          # virtually unlimited thread pool by default.
-          '--experiments=worker_threads=100',
-          # ---------------------- End of Beam Args -----------------------.
-
-          # --------- Flink runner Args (ignored by Spark runner) ---------.
-          '--parallelism=%d' % worker_parallelism,
-
-          # TODO(FLINK-10672): Obviate setting BATCH_FORCED.  # pylint: disable=g-bad-todo
-          '--execution_mode_for_batch=BATCH_FORCED',
-          # ------------------ End of Flink runner Args -------------------.
-      ],
+      beam_pipeline_args=beam_pipeline_args,
       # LINT.ThenChange(setup/setup_beam_on_spark.sh)
       # LINT.ThenChange(setup/setup_beam_on_flink.sh)
   )
@@ -182,6 +185,14 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
 #   $python taxi_pipeline_portable_beam.py
 if __name__ == '__main__':
   absl.logging.set_verbosity(absl.logging.INFO)
+
+  parser = argparse.ArgumentParser(
+      description='Run the Chicago Taxi example pipeline on Flink or Spark.')
+  parser.add_argument('--runner',
+                      required=True,
+                      help='The runner to execute the pipeline.',
+                      choices=['flink', 'spark'])
+  args = parser.parse_args()
 
   # LINT.IfChange
   try:
@@ -200,4 +211,5 @@ if __name__ == '__main__':
           module_file=_module_file,
           serving_model_dir=_serving_model_dir,
           metadata_path=_metadata_path,
-          worker_parallelism=parallelism))
+          worker_parallelism=parallelism,
+          runner=args.runner))
