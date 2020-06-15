@@ -63,5 +63,7 @@ function update_beam(){
   if [ ! -z "$GIT_COMMAND" ]; then
     echo "Using $GIT_COMMAND to update Beam source code."
     cd $BEAM_DIR && $GIT_COMMAND checkout $BEAM_BRANCH && $GIT_COMMAND pull --rebase
+    git cherry-pick 49d3f36fc6f6397ab52a6dc936455e39982919a1
+    git cherry-pick 54631c0b01785e14782852206c2dac9c27064896
   fi
 }
